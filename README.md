@@ -52,7 +52,7 @@
 |---|-------|--------|-------------|------------|
 | 1 | [Installation + Cluster Setup](01.Installation/note.md) | ✅ Complete | Kind cluster with control-plane + worker | `kubectl`, `kind`, cluster architecture |
 | 2 | [Pods, Namespaces, Labels & YAML](02.pods%2Cnamespace%2Clabels%2Cyamlbasic/note.md) | ✅ Complete | Multi-container pod with sidecar in `dev` namespace | YAML manifests, `kubectl logs/describe`, labels |
-| 3 | [Deployments & Self-Healing](03.Deployment%2Creplicas%2Cself-healing%2Cselector%26template/note.md) | ✅ Complete | ReplicaSet, self-healing, scaling to 5 replicas, selector & template | Desired state, `kubectl scale`, rollout commands |
+| 3 | [Deployments & Self-Healing](03.Deployment,replicas,self-healing,selector&template/note.md) | ✅ Complete | ReplicaSet, self-healing, scaling to 5 replicas, selector & template | Desired state, `kubectl scale`, rollout commands |
 | 4 | **Services (ClusterIP)** | ⬜ Up next | Stable Service endpoint for Node API | Service discovery, pod-to-pod networking |
 | 5 | **React + Node Integration** | ⬜ Up next | Full-stack: React → Node API inside cluster | Multi-service deployment |
 | 6 | **K8s Networking Deep Dive** | ⬜ Up next | DNS, CoreDNS, service discovery experiments | `nslookup`, DNS resolution |
