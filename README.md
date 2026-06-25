@@ -54,7 +54,7 @@
 | 2 | [Pods, Namespaces, Labels & YAML](02.pods%2Cnamespace%2Clabels%2Cyamlbasic/note.md) | ✅ Complete | Multi-container pod with sidecar in `dev` namespace | YAML manifests, `kubectl logs/describe`, labels |
 | 3 | [Deployments & Self-Healing](03.Deployment,replicas,self-healing,selector&template/note.md) | ✅ Complete | ReplicaSet, self-healing, scaling to 5 replicas, selector & template | Desired state, `kubectl scale`, rollout commands |
 | 4 | [Services (ClusterIP)](04.service/note.md) | ✅ Complete | Stable ClusterIP Service for nginx Deployment | Service discovery, pod-to-pod networking, load balancing |
-| 5 | **React + Node Integration** | ⬜ Up next | Full-stack: React → Node API inside cluster | Multi-service deployment |
+| 5 | [Backend + Frontend Website](05.backend,frontend_website_using_k8/note.md) | ✅ Complete | Nginx frontend → FastAPI backend with proxy_pass | Multi-service deployment, Docker image build, kind load |
 | 6 | **K8s Networking Deep Dive** | ⬜ Up next | DNS, CoreDNS, service discovery experiments | `nslookup`, DNS resolution |
 | 7 | **Postgres + StatefulSet + PVC** | ⬜ Up next | Database with persistent storage, survives restarts | PV/PVC, StatefulSet, storage lifecycle |
 | 8 | **ConfigMaps & Secrets** | ⬜ Up next | DB credentials in Secrets, env config in ConfigMaps | Config injection, `Secrets` vs `ConfigMap` |
@@ -171,6 +171,46 @@ kubectl scale deployment --replicas=5 -n dev     # Endpoints auto-expand
 
 ---
 
+### Phase 5: Backend + Frontend Website Using K8s
+
+**Goal:** Deploy a full-stack application — Nginx frontend talking to FastAPI backend inside the cluster.
+
+**Manifests:** [`backend.yaml`](05.backend,frontend_website_using_k8/fastapi-backend/backend.yaml) — FastAPI Deployment + Service, [`frontend.yaml`](05.backend,frontend_website_using_k8/frontend/frontend.yaml) — Nginx Deployment + Service.
+
+| Concept | Implementation |
+|---------|---------------|
+| Multi-Service Architecture | Frontend and backend as separate Deployments with separate Services |
+| Nginx Reverse Proxy | `proxy_pass http://backend:80/;` forwards `/api` to backend Service |
+| Service Discovery | Nginx uses `backend` hostname — K8s DNS resolves it automatically |
+| Docker Image Build | Built images locally, loaded into kind with `kind load docker-image` |
+| Field Name Matching | Frontend JS and backend JSON must use identical field names |
+
+**Debugging skills:**
+```bash
+# Build and load images
+docker build -t fastapi-backend:1.0 ./fastapi-backend
+docker build -t frontend:1.0 ./frontend
+kind load docker-image fastapi-backend:1.0 --name k8-lab
+kind load docker-image frontend:1.0 --name k8-lab
+
+# Apply and verify
+kubectl apply -f fastapi-backend/backend.yaml
+kubectl apply -f frontend/frontend.yaml
+kubectl get pods -o wide
+kubectl get svc
+
+# Test connectivity
+kubectl exec <frontend-pod> -- curl -s http://backend/
+kubectl exec <frontend-pod> -- curl -s http://localhost/api
+
+# Access in browser
+kubectl port-forward service/frontend 8080:80
+```
+
+**Bugs fixed:** Missing `@` decorator in FastAPI route (returned 404), frontend/backend field name mismatch (`date` vs `time`).
+
+---
+
 ## 🧱 Repository Structure
 
 ```
@@ -193,7 +233,19 @@ kubernetes-lab/
 │   ├── service.yaml                   ← ClusterIP Service manifest
 │   ├── note.md                        ← Phase notes & commands
 │   └── note.ipynb
-├── ... (phases 5–15)
+├── 05.backend,frontend_website_using_k8/
+│   ├── fastapi-backend/
+│   │   ├── main.py                    ← FastAPI backend application
+│   │   ├── Dockerfile                 ← Backend container build
+│   │   └── backend.yaml               ← Backend Deployment + Service
+│   ├── frontend/
+│   │   ├── index.html                 ← Frontend HTML with fetch to /api
+│   │   ├── nginx.conf                 ← Nginx config with proxy_pass
+│   │   ├── Dockerfile                 ← Frontend container build
+│   │   └── frontend.yaml              ← Frontend Deployment + Service
+│   ├── note.md                        ← Phase notes & commands
+│   └── note.ipynb
+├── ... (phases 6–15)
 └── capstone/                          ← 🏆 Final production deployment
 ```
 
@@ -233,6 +285,10 @@ Each phase follows: **learn → build → document** with a manifest file (`.yam
 - ✅ Services — ClusterIP for stable Pod networking
 - ✅ Service discovery — DNS name + label selectors route traffic to Pods
 - ✅ Load balancing — Service distributes across replicas automatically
+- ✅ Multi-service architecture — Frontend + Backend as separate Deployments
+- ✅ Nginx reverse proxy — `proxy_pass` for inter-service communication
+- ✅ Docker image build & kind load — Local images loaded into kind cluster
+- ✅ Full-stack K8s deployment — Browser → Frontend Service → Backend Service → Pods
 
 ---
 
