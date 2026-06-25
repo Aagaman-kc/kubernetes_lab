@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>K8s Full-Stack Demo</title>
+</head>
+<body>
+    <h1>Frontend in Kubernetes</h1>
+    <div id="output">Loading data from backend...</div>
+    <script>
+        fetch('/api')
+            .then(response => response.json())
+            .then(data => {
+                document.getElementById('output').innerHTML =
+                    `<p><strong>Message:</strong> ${data.message}</p>
+                     <p><strong>Time:</strong> ${data.time}</p>`;
+            })
+            .catch(err => {
+                document.getElementById('output').innerText = 'Error: ' + err;
+            });
+    </script>
+</body>
+</html>

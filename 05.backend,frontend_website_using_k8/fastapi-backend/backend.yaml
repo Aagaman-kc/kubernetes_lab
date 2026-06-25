@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: backend    
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend  
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: api
+          image: fastapi-backend:1.0
+          ports:
+            - containerPort: 80
+
+--- 
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  labels:
+    app: backend
+spec:
+  selector:
+    app: backend # must match to pod label
+  ports:
+    - port: 80  # expose service on port 80
+      targetPort: 80  # container port where application is listening
+  type: ClusterIP # accessible only within the cluster
