@@ -53,7 +53,7 @@
 | 1 | [Installation + Cluster Setup](01.Installation/note.md) | ✅ Complete | Kind cluster with control-plane + worker | `kubectl`, `kind`, cluster architecture |
 | 2 | [Pods, Namespaces, Labels & YAML](02.pods%2Cnamespace%2Clabels%2Cyamlbasic/note.md) | ✅ Complete | Multi-container pod with sidecar in `dev` namespace | YAML manifests, `kubectl logs/describe`, labels |
 | 3 | [Deployments & Self-Healing](03.Deployment,replicas,self-healing,selector&template/note.md) | ✅ Complete | ReplicaSet, self-healing, scaling to 5 replicas, selector & template | Desired state, `kubectl scale`, rollout commands |
-| 4 | **Services (ClusterIP)** | ⬜ Up next | Stable Service endpoint for Node API | Service discovery, pod-to-pod networking |
+| 4 | [Services (ClusterIP)](04.service/note.md) | ✅ Complete | Stable ClusterIP Service for nginx Deployment | Service discovery, pod-to-pod networking, load balancing |
 | 5 | **React + Node Integration** | ⬜ Up next | Full-stack: React → Node API inside cluster | Multi-service deployment |
 | 6 | **K8s Networking Deep Dive** | ⬜ Up next | DNS, CoreDNS, service discovery experiments | `nslookup`, DNS resolution |
 | 7 | **Postgres + StatefulSet + PVC** | ⬜ Up next | Database with persistent storage, survives restarts | PV/PVC, StatefulSet, storage lifecycle |
@@ -145,6 +145,32 @@ kubectl rollout status deployment/node-api-deployment -n dev      # Rollout chec
 
 ---
 
+### Phase 4: Services (ClusterIP)
+
+**Goal:** Provide a stable network endpoint for ephemeral Pods using a Service.
+
+**Manifests:** [`deployment.YAML`](04.service/deployment.YAML) — 3 nginx replicas, [`service.yaml`](04.service/service.yaml) — ClusterIP Service.
+
+| Concept | Implementation |
+|---------|---------------|
+| Service | Stable IP + DNS name fronting a set of Pods |
+| ClusterIP | Default type — internal-only, accessible via `node-service` or FQDN |
+| Selector | `selector: app: node-api` matches Pods by label |
+| Endpoints | Auto-maintained list of Pod IPs; updates on scale/delete |
+| Load Balancing | Traffic distributed across all matching Pods |
+
+**Debugging skills:**
+```bash
+kubectl describe svc node-service -n dev        # Inspect selector & endpoints
+kubectl get endpoints node-service -n dev        # Live Pod IPs
+wget -qO- http://node-service                    # Test via Service DNS
+kubectl scale deployment --replicas=5 -n dev     # Endpoints auto-expand
+```
+
+**Troubleshooting learned:** Service names must be lowercase RFC 1123; DNS name matches `metadata.name` (not the deployment name).
+
+---
+
 ## 🧱 Repository Structure
 
 ```
@@ -162,7 +188,11 @@ kubernetes-lab/
 │   ├── deployment.YAML               ← Deployment manifest
 │   ├── note.md                       ← Phase notes & commands
 │   └── note.ipynb
-├── 04.services/                       ← 🔜 Phase 4
+├── 04.service/
+│   ├── deployment.YAML                ← Deployment manifest (3 nginx replicas)
+│   ├── service.yaml                   ← ClusterIP Service manifest
+│   ├── note.md                        ← Phase notes & commands
+│   └── note.ipynb
 ├── ... (phases 5–15)
 └── capstone/                          ← 🏆 Final production deployment
 ```
@@ -200,6 +230,9 @@ Each phase follows: **learn → build → document** with a manifest file (`.yam
 - ✅ Selector + Template — linking Deployment → ReplicaSet → Pods
 - ✅ Scaling — `kubectl scale` for horizontal pod scaling
 - ✅ Rollout commands — `rollout status`, `rollout history`
+- ✅ Services — ClusterIP for stable Pod networking
+- ✅ Service discovery — DNS name + label selectors route traffic to Pods
+- ✅ Load balancing — Service distributes across replicas automatically
 
 ---
 
