@@ -55,7 +55,7 @@
 | 3 | [Deployments & Self-Healing](03.Deployment,replicas,self-healing,selector&template/note.md) | ✅ Complete | ReplicaSet, self-healing, scaling to 5 replicas, selector & template | Desired state, `kubectl scale`, rollout commands |
 | 4 | [Services (ClusterIP)](04.service/note.md) | ✅ Complete | Stable ClusterIP Service for nginx Deployment | Service discovery, pod-to-pod networking, load balancing |
 | 5 | [Backend + Frontend Website](05.backend,frontend_website_using_k8/note.md) | ✅ Complete | Nginx frontend → FastAPI backend with proxy_pass | Multi-service deployment, Docker image build, kind load |
-| 6 | **K8s Networking Deep Dive** | ⬜ Up next | DNS, CoreDNS, service discovery experiments | `nslookup`, DNS resolution |
+| 6 | [K8s Networking Deep Dive](06.Networking-deep-dive/note.md) | ✅ Complete | FastAPI frontend → backend via CoreDNS, DNS deep dive with netshoot | Service discovery, CoreDNS, `kubectl port-forward` |
 | 7 | **Postgres + StatefulSet + PVC** | ⬜ Up next | Database with persistent storage, survives restarts | PV/PVC, StatefulSet, storage lifecycle |
 | 8 | **ConfigMaps & Secrets** | ⬜ Up next | DB credentials in Secrets, env config in ConfigMaps | Config injection, `Secrets` vs `ConfigMap` |
 | 9 | **Load Generator** | ⬜ Up next | Python traffic simulator hitting Node API | Traffic simulation, observability prep |
@@ -211,6 +211,48 @@ kubectl port-forward service/frontend 8080:80
 
 ---
 
+### Phase 6: K8s Networking Deep Dive
+
+**Goal:** Understand DNS-based service discovery and pod-to-pod communication inside the cluster.
+
+**Manifests:** [`backend/backend.yaml`](06.Networking-deep-dive/backend/backend.yaml) — FastAPI backend Deployment + Service, [`frontend/frontend.yaml`](06.Networking-deep-dive/frontend/frontend.yaml) — FastAPI frontend Deployment + Service.
+
+| Concept | Implementation |
+|---------|---------------|
+| CoreDNS | Internal DNS server resolving Service names to ClusterIPs |
+| Service Discovery | Frontend calls `http://backend` — CoreDNS resolves it automatically |
+| FQDN Pattern | `<service>.<namespace>.svc.cluster.local` |
+| search Domains | `/etc/resolv.conf` in pods enables short name resolution (`backend` → FQDN) |
+| Endpoints | Service auto-maintains live list of backing Pod IPs |
+| kube-proxy | Forwards Service VIP traffic to individual Pod IPs |
+| kind load docker-image | Required to make locally built images available in kind nodes |
+
+**Debugging skills:**
+```bash
+# Deploy backend + frontend
+docker build -t fastapi-backend:1.0 ./backend
+docker build -t fastapi-frontend:1.0 ./frontend
+kind load docker-image fastapi-backend:1.0 --name k8-lab
+kind load docker-image fastapi-frontend:1.0 --name k8-lab
+kubectl apply -f backend/backend.yaml
+kubectl apply -f frontend/frontend.yaml
+
+# DNS deep dive from inside the cluster
+kubectl run net-debug --image=nicolaka/netshoot -it --rm --restart=Never -n dev -- /bin/bash
+  curl http://backend                    # JSON response
+  curl http://frontend                   # HTML with backend data
+  nslookup backend                       # backend.dev.svc.cluster.local
+  cat /etc/resolv.conf                   # search domains
+  exit
+
+# Access in browser
+kubectl port-forward service/frontend 8080:80 -n dev
+```
+
+**Key insight:** A pod doesn't need to know *which* Pod IP it's talking to — it just uses the Service DNS name, and CoreDNS + kube-proxy handle the rest.
+
+---
+
 ## 🧱 Repository Structure
 
 ```
@@ -245,7 +287,20 @@ kubernetes-lab/
 │   │   └── frontend.yaml              ← Frontend Deployment + Service
 │   ├── note.md                        ← Phase notes & commands
 │   └── note.ipynb
-├── ... (phases 6–15)
+├── 06.Networking-deep-dive/
+│   ├── backend/
+│   │   ├── app.py                     ← FastAPI backend (returns JSON)
+│   │   ├── Dockerfile                 ← Backend container build
+│   │   ├── requirements.txt
+│   │   └── backend.yaml               ← Backend Deployment + Service
+│   ├── frontend/
+│   │   ├── main.py                    ← FastAPI frontend (calls backend via requests)
+│   │   ├── Dockerfile                 ← Frontend container build
+│   │   ├── requirements.txt
+│   │   └── frontend.yaml              ← Frontend Deployment + Service
+│   ├── note.md                        ← Phase notes & commands
+│   └── note.ipynb
+├── ... (phases 7–15)
 └── capstone/                          ← 🏆 Final production deployment
 ```
 
@@ -289,6 +344,9 @@ Each phase follows: **learn → build → document** with a manifest file (`.yam
 - ✅ Nginx reverse proxy — `proxy_pass` for inter-service communication
 - ✅ Docker image build & kind load — Local images loaded into kind cluster
 - ✅ Full-stack K8s deployment — Browser → Frontend Service → Backend Service → Pods
+- ✅ CoreDNS — Service name resolution inside the cluster
+- ✅ DNS deep dive — FQDN pattern, search domains, `nslookup`, `/etc/resolv.conf`
+- ✅ kubectl port-forward — Accessing ClusterIP Services from localhost
 
 ---
 
