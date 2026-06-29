@@ -1,0 +1,68 @@
+# =============================================
+# StatefulSet — PostgreSQL with persistent storage
+# =============================================
+# StatefulSet vs Deployment:
+#   - Stable Pod identity: Pods are named postgres-0, postgres-1, etc.
+#   - Ordered creation/termination (0 first, then 1, ...)
+#   - Uses volumeClaimTemplates — each Pod gets its own PVC automatically
+# This is ideal for stateful apps like databases.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: dev
+spec:
+  # Must match the headless service name (service.yaml)
+  # so each Pod gets a stable DNS: postgres-0.postgres.dev.svc.cluster.local
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16
+        ports:
+        - containerPort: 5432  # Postgres default port
+        env:
+        # --- Plain value (from ConfigMap in production) ---
+        - name: POSTGRES_DB
+          value: appdb          # database name to create on startup
+
+        # --- Sensitive values from Secret (never hardcoded) ---
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret   # must match Secret metadata.name
+              key: POSTGRES_USER        # key inside the Secret
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgresql-secret
+              key: POSTGRES_PASSWORD
+
+        # --- Mount the PVC to Postgres data directory ---
+        volumeMounts:
+        - name: postgres-storage
+          mountPath: /var/lib/postgresql/data  # where Postgres stores DB files
+
+  # =============================================
+  # volumeClaimTemplates — automatic PVC per replica
+  # =============================================
+  # Unlike Deployment (which reuses one PVC for all replicas),
+  # StatefulSet creates a dedicated PVC for each replica.
+  # For 1 replica, it creates one PVC named: postgres-storage-postgres-0.
+  # The volumeMount name (postgres-storage) links to this template.
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-storage
+    spec:
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 2Gi

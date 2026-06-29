@@ -1,0 +1,23 @@
+# =============================================
+# PersistentVolumeClaim — request storage
+# =============================================
+# A PVC is a request for storage by a Pod.
+# Kubernetes automatically provisions a PV
+# (or binds to an existing one) that matches.
+# The Pod references this PVC — it never sees the PV directly.
+# This decouples storage provisioning from Pod definitions.
+apiVersion: v1
+kind: PersistentVolumeClaim
+
+metadata:
+  name: postgres-pvc        # referenced by StatefulSet volume claim
+  namespace: dev
+
+spec:
+  # ReadWriteOnce = single node can mount as read-write
+  # Other options: ReadOnlyMany, ReadWriteMany
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi          # minimum storage capacity requested
