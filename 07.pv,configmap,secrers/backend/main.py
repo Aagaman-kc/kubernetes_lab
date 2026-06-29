@@ -11,3 +11,17 @@ conn = psycopg2.connect(
     password=os.getenv("DB_PASSWORD"),
     port=os.getenv("DB_PORT", "5432")
 )
+@app.get("/")
+def get_users():
+
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT * FROM users")
+
+    rows = cursor.fetchall()
+
+    cursor.close()
+
+    return {
+        "users": rows
+    }
