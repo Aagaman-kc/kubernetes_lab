@@ -49,23 +49,18 @@
 ## ✅ Progress Tracker
 
 | # | Phase | Status | What I Built | Key Skills |
-|---|-------|--------|-------------|------------|
-| 1 | [Installation + Cluster Setup](01.Installation/note.md) | ✅ Complete | Kind cluster with control-plane + worker | `kubectl`, `kind`, cluster architecture |
-| 2 | [Pods, Namespaces, Labels & YAML](02.pods%2Cnamespace%2Clabels%2Cyamlbasic/note.md) | ✅ Complete | Multi-container pod with sidecar in `dev` namespace | YAML manifests, `kubectl logs/describe`, labels |
-| 3 | [Deployments & Self-Healing](03.Deployment,replicas,self-healing,selector&template/note.md) | ✅ Complete | ReplicaSet, self-healing, scaling to 5 replicas, selector & template | Desired state, `kubectl scale`, rollout commands |
+|---|---|---|---|---|
+| 1 | [Cluster Setup & Architecture](01.Installation/note.md) | ✅ Complete | Kind cluster with control-plane + worker | `kubectl`, `kind`, cluster architecture |
+| 2 | [Pods, Namespaces & Labels](02.pods%2Cnamespace%2Clabels%2Cyamlbasic/note.md) | ✅ Complete | Multi-container pod with sidecar in `dev` namespace | YAML manifests, `kubectl logs/describe`, labels |
+| 3 | [Deployments & ReplicaSets](03.Deployment,replicas,self-healing,selector&template/note.md) | ✅ Complete | ReplicaSet, self-healing, scaling to 5 replicas | Desired state, `kubectl scale`, rollout commands |
 | 4 | [Services (ClusterIP)](04.service/note.md) | ✅ Complete | Stable ClusterIP Service for nginx Deployment | Service discovery, pod-to-pod networking, load balancing |
-| 5 | [Backend + Frontend Website](05.backend,frontend_website_using_k8/note.md) | ✅ Complete | Nginx frontend → FastAPI backend with proxy_pass | Multi-service deployment, Docker image build, kind load |
-| 6 | [K8s Networking Deep Dive](06.Networking-deep-dive/note.md) | ✅ Complete | FastAPI frontend → backend via CoreDNS, DNS deep dive with netshoot | Service discovery, CoreDNS, `kubectl port-forward` |
-| 7 | **Postgres + StatefulSet + PVC** | ⬜ Up next | Database with persistent storage, survives restarts | PV/PVC, StatefulSet, storage lifecycle |
-| 8 | **ConfigMaps & Secrets** | ⬜ Up next | DB credentials in Secrets, env config in ConfigMaps | Config injection, `Secrets` vs `ConfigMap` |
-| 9 | **Load Generator** | ⬜ Up next | Python traffic simulator hitting Node API | Traffic simulation, observability prep |
-| 9b | **Specialized Workloads** | ⬜ Up next | Job, CronJob, DaemonSet | One-shot, scheduled, per-node workloads |
-| 10 | **GitHub Actions CI/CD** | ⬜ Up next | Build → Push → Deploy pipeline | Docker build, automated k8s deploy |
-| 11 | **HPA (Horizontal Pod Autoscaler)** | ⬜ Up next | CPU-based auto-scaling with load generator | Metrics Server, scale-up/down policies |
-| 12 | **Ingress + GatewayAPI** | ⬜ Up next | Path-based routing: `/` → React, `/api` → Node | L7 routing, Ingress Controller |
-| 13 | **AWS EKS** | ⬜ Up next | Full stack on managed EKS cluster | Cloud K8s, LoadBalancer, node groups |
-| 14 | **Security (RBAC)** | ⬜ Up next | Read-only user, namespace-scoped permissions | Roles, RoleBindings, ServiceAccounts |
-| 15 | **Observability** | ⬜ Up next | Prometheus + Grafana dashboards | Metrics collection, latency/CPU/request dashboards |
+| 5 | [Frontend + Backend Microservices](05.backend,frontend_website_using_k8/note.md) | ✅ Complete | Nginx frontend → FastAPI backend with proxy_pass | Multi-service deployment, Docker image build, kind load |
+| 6 | [K8s Networking Deep Dive](06.Networking-deep-dive/note.md) | ✅ Complete | FastAPI frontend → backend via CoreDNS, DNS deep dive | Service discovery, CoreDNS, kube-proxy |
+| 7 | [Stateful Applications & Configuration](07.pv%2Cconfigmap%2Csecrers/note.md) | ✅ Complete | PostgreSQL StatefulSet + PVC, ConfigMap + Secret injection, rolling update | PV/PVC, StatefulSet, Secrets, ConfigMap, rolling update |
+| 8 | **Autoscaling Under Load** | ⬜ Up next | Load generator + HPA auto-scaling | Metrics Server, HPA, traffic simulation |
+| 9 | **Ingress & CI/CD** | ⬜ Up next | Path-based Ingress + GitHub Actions pipeline | Ingress controller, CI/CD automation |
+| 10 | **Production Readiness & Observability** | ⬜ Up next | RBAC, Prometheus, Grafana, EKS overview | Security, monitoring, cloud deployment |
+| 🏆 | **Final Capstone** | ⬜ Up next | Full production stack on AWS EKS | Everything combined |
 
 ---
 
@@ -253,6 +248,47 @@ kubectl port-forward service/frontend 8080:80 -n dev
 
 ---
 
+### Phase 7: PV/PVC, ConfigMap & Secrets
+
+**Goal:** Deploy PostgreSQL with persistent storage, inject config via ConfigMaps + Secrets, and perform rolling updates.
+
+**Manifests:** [`secrets.yaml`](07.pv,configmap,secrers/postgres/secrets.yaml) — Secret for DB credentials, [`pvc.yaml`](07.pv,configmap,secrers/postgres/pvc.yaml) — PersistentVolumeClaim, [`statefulset.yaml`](07.pv,configmap,secrers/postgres/statefulset.yaml) — PostgreSQL StatefulSet, [`service.yaml`](07.pv,configmap,secrers/postgres/service.yaml) — headless ClusterIP.
+
+| Concept | Implementation |
+|---------|---------------|
+| Secret | Stores `POSTGRES_USER`/`POSTGRES_PASSWORD` — base64-encoded, never hardcoded |
+| PVC | Requests 1Gi `ReadWriteOnce` storage — decouples storage from Pod lifecycle |
+| StatefulSet | Stable Pod identity (`postgres-0`), ordered creation, `volumeClaimTemplates` for per-Pod PVC |
+| Headless Service | `clusterIP: None` — direct Pod DNS: `postgres-0.postgres.dev.svc.cluster.local` |
+| Config Injection | Backend reads `DB_HOST`, `DB_NAME` (ConfigMap) + `DB_USER`, `DB_PASSWORD` (Secret) via `os.getenv()` |
+| Rolling Update | Changed backend image tag `1.0` → `1.1` — zero-downtime Pod replacement |
+| Fake-Data Pattern | Started with hardcoded JSON → swapped to real Postgres queries without architecture changes |
+
+**Debugging skills:**
+```bash
+# Deploy Postgres
+kubectl apply -f secrets.yaml
+kubectl apply -f pvc.yaml
+kubectl apply -f statefulset.yaml
+kubectl apply -f service.yaml
+
+# Build & load backend v1.1 (with Postgres connection)
+docker build -t backend-07:1.1 .
+kind load docker-image backend-07:1.1 --name k8-lab
+
+# Rolling update
+kubectl apply -f backend.yaml
+kubectl rollout status deployment/backend-deployment -n dev
+
+# Verify
+kubectl port-forward service/backend 8080:80 -n dev
+# → {"users":[{"id":1,"name":"Alice"},...]}
+```
+
+**Common gotcha:** StatefulSet `volumes:` inside `spec.template.spec.containers` is invalid — persistent storage must go in `volumeClaimTemplates` at `spec` level.
+
+---
+
 ## 🧱 Repository Structure
 
 ```
@@ -300,7 +336,25 @@ kubernetes-lab/
 │   │   └── frontend.yaml              ← Frontend Deployment + Service
 │   ├── note.md                        ← Phase notes & commands
 │   └── note.ipynb
-├── ... (phases 7–15)
+├── 07.pv,configmap,secrers/
+│   ├── postgres/
+│   │   ├── secrets.yaml               ← DB credentials Secret
+│   │   ├── pvc.yaml                   ← PersistentVolumeClaim
+│   │   ├── statefulset.yaml           ← PostgreSQL StatefulSet
+│   │   └── service.yaml               ← Headless ClusterIP service
+│   ├── backend/
+│   │   ├── main.py                    ← FastAPI with Postgres connection
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   └── backend.yaml               ← Backend Deployment + Service
+│   ├── frontend/
+│   │   ├── main.py                    ← Frontend app
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   └── frontend.yaml              ← Frontend Deployment + Service
+│   ├── note.md                        ← Phase notes & commands
+│   └── note.ipynb
+├── ... (phases 8–10)
 └── capstone/                          ← 🏆 Final production deployment
 ```
 
@@ -347,6 +401,12 @@ Each phase follows: **learn → build → document** with a manifest file (`.yam
 - ✅ CoreDNS — Service name resolution inside the cluster
 - ✅ DNS deep dive — FQDN pattern, search domains, `nslookup`, `/etc/resolv.conf`
 - ✅ kubectl port-forward — Accessing ClusterIP Services from localhost
+- ✅ PersistentVolumeClaim (PVC) — requesting storage decoupled from Pod lifecycle
+- ✅ StatefulSet — stable Pod identity (`postgres-0`), ordered creation, `volumeClaimTemplates`
+- ✅ Headless Service — `clusterIP: None` for direct Pod DNS
+- ✅ Secret — base64-encoded sensitive data, injected via `secretKeyRef`
+- ✅ ConfigMap — non-sensitive config injected as env vars
+- ✅ Rolling update — zero-downtime Pod replacement by changing image tag
 
 ---
 
