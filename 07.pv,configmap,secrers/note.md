@@ -189,6 +189,11 @@ uvicorn
 ### `backend/backend.yaml`
 
 ```yaml
+# =============================================
+# Backend Deployment — 3 replicas behind ClusterIP Service
+# =============================================
+# In v1.1, image becomes backend-07:1.1 and env vars
+# from ConfigMap + Secret are injected here (see Step 6).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -309,31 +314,51 @@ GitHub Actions → Secrets Manager (AWS/Vault/Azure/GCP) → K8s Secret (deploy-
 ### 5a. `postgres/secrets.yaml`
 
 ```yaml
+# =============================================
+# Secret — stores sensitive data (base64-encoded by K8s)
+# =============================================
+# Opaque = arbitrary key-value pairs (most common type)
+# stringData accepts plain text; K8s auto-encodes to base64 on store
+# NOTE: Base64 is NOT encryption — never commit real secrets to Git
 apiVersion: v1
 kind: Secret
+
 metadata:
-  name: postgresql-secret
+  name: postgresql-secret    # referenced by StatefulSet via secretKeyRef
   namespace: dev
+
 type: Opaque
+
 stringData:
-  POSTGRES_USER: admin
+  POSTGRES_USER: admin          # injected as env var into Postgres container
   POSTGRES_PASSWORD: password123
 ```
 
 ### 5b. `postgres/pvc.yaml`
 
 ```yaml
+# =============================================
+# PersistentVolumeClaim — request storage
+# =============================================
+# A PVC is a request for storage by a Pod.
+# K8s automatically provisions a PV (or binds to an existing one) that matches.
+# The Pod references this PVC — it never sees the PV directly.
+# This decouples storage provisioning from Pod definitions.
 apiVersion: v1
 kind: PersistentVolumeClaim
+
 metadata:
-  name: postgres-pvc
+  name: postgres-pvc           # referenced by StatefulSet volume claim
   namespace: dev
+
 spec:
+  # ReadWriteOnce = single node can mount as read-write
+  # Other options: ReadOnlyMany, ReadWriteMany
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 1Gi
+      storage: 1Gi             # minimum storage capacity requested
 ```
 
 ### 5c. `postgres/statefulset.yaml`
@@ -341,12 +366,22 @@ spec:
 > **❌ Critical gotcha:** In StatefulSet, use `volumeClaimTemplates` at `spec` level, NOT `volumes:` inside the container spec (that's a Deployment thing).
 
 ```yaml
+# =============================================
+# StatefulSet — PostgreSQL with persistent storage
+# =============================================
+# StatefulSet vs Deployment:
+#   - Stable Pod identity: Pods are named postgres-0, postgres-1, etc.
+#   - Ordered creation/termination (0 first, then 1, ...)
+#   - Uses volumeClaimTemplates — each Pod gets its own PVC automatically
+# This is ideal for stateful apps like databases.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: postgres
   namespace: dev
 spec:
+  # Must match the headless service name (service.yaml)
+  # so each Pod gets a stable DNS: postgres-0.postgres.dev.svc.cluster.local
   serviceName: postgres
   replicas: 1
   selector:
@@ -361,23 +396,36 @@ spec:
       - name: postgres
         image: postgres:16
         ports:
-        - containerPort: 5432
+        - containerPort: 5432  # Postgres default port
         env:
+        # --- Plain value (from ConfigMap in production) ---
         - name: POSTGRES_DB
-          value: appdb
+          value: appdb          # database name to create on startup
+
+        # --- Sensitive values from Secret (never hardcoded) ---
         - name: POSTGRES_USER
           valueFrom:
             secretKeyRef:
-              name: postgresql-secret
-              key: POSTGRES_USER
+              name: postgresql-secret   # must match Secret metadata.name
+              key: POSTGRES_USER        # key inside the Secret
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
               name: postgresql-secret
               key: POSTGRES_PASSWORD
+
+        # --- Mount the PVC to Postgres data directory ---
         volumeMounts:
         - name: postgres-storage
-          mountPath: /var/lib/postgresql/data
+          mountPath: /var/lib/postgresql/data  # where Postgres stores DB files
+
+  # =============================================
+  # volumeClaimTemplates — automatic PVC per replica
+  # =============================================
+  # Unlike Deployment (which reuses one PVC for all replicas),
+  # StatefulSet creates a dedicated PVC for each replica.
+  # For 1 replica, it creates one PVC named: postgres-storage-postgres-0.
+  # The volumeMount name (postgres-storage) links to this template.
   volumeClaimTemplates:
   - metadata:
       name: postgres-storage
@@ -391,18 +439,29 @@ spec:
 ### 5d. `postgres/service.yaml`
 
 ```yaml
+# =============================================
+# Headless Service — stable DNS for StatefulSet Pods
+# =============================================
+# clusterIP: None means this is a "headless" service.
+# It doesn't load-balance — instead it returns the Pod IPs directly.
+# Combined with StatefulSet, each Pod gets a predictable DNS:
+#   postgres-0.postgres.dev.svc.cluster.local
 apiVersion: v1
 kind: Service
+
 metadata:
   name: postgres
   namespace: dev
+
 spec:
   selector:
     app: postgres
+
   ports:
   - port: 5432
     targetPort: 5432
-  clusterIP: None              # headless → stable DNS for StatefulSet
+
+  clusterIP: None              # headless — enables direct Pod DNS
 ```
 
 ### Commands
