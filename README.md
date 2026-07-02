@@ -5,7 +5,7 @@
 > One system evolves through every phase: React → Node API → Postgres → AWS EKS,
 > progressively layered with Deployments, Services, Ingress, CI/CD, HPA, monitoring, and RBAC.
 
-![Status](https://img.shields.io/badge/status-in%20progress-yellow)
+![Status](https://img.shields.io/badge/status-8%20of%2010%20phases%20complete-blue)
 ![Kubernetes](https://img.shields.io/badge/tools-Kubernetes-326CE5?logo=kubernetes)
 ![Docker](https://img.shields.io/badge/tools-Docker-2496ED?logo=docker)
 ![AWS](https://img.shields.io/badge/cloud-AWS%20EKS-FF9900?logo=amazon-aws)
@@ -57,7 +57,7 @@
 | 5 | [Frontend + Backend Microservices](05.backend,frontend_website_using_k8/note.md) | ✅ Complete | Nginx frontend → FastAPI backend with proxy_pass | Multi-service deployment, Docker image build, kind load |
 | 6 | [K8s Networking Deep Dive](06.Networking-deep-dive/note.md) | ✅ Complete | FastAPI frontend → backend via CoreDNS, DNS deep dive | Service discovery, CoreDNS, kube-proxy |
 | 7 | [Stateful Applications & Configuration](07.pv%2Cconfigmap%2Csecrers/note.md) | ✅ Complete | PostgreSQL StatefulSet + PVC, ConfigMap + Secret injection, rolling update | PV/PVC, StatefulSet, Secrets, ConfigMap, rolling update |
-| 8 | **Autoscaling Under Load** | ⬜ Up next | Load generator + HPA auto-scaling | Metrics Server, HPA, traffic simulation |
+| 8 | [**Autoscaling Under Load**](08.HPA%2Cmetrics-server%2Cloadgenerator/note.md) | ✅ Complete | Backend scaled 3→7 via HPA under load generator traffic | Metrics Server, HPA, traffic simulation |
 | 9 | **Ingress & CI/CD** | ⬜ Up next | Path-based Ingress + GitHub Actions pipeline | Ingress controller, CI/CD automation |
 | 10 | **Production Readiness & Observability** | ⬜ Up next | RBAC, Prometheus, Grafana, EKS overview | Security, monitoring, cloud deployment |
 | 🏆 | **Final Capstone** | ⬜ Up next | Full production stack on AWS EKS | Everything combined |
@@ -289,6 +289,52 @@ kubectl port-forward service/backend 8080:80 -n dev
 
 ---
 
+### Phase 8: Autoscaling Under Load (HPA + Metrics Server)
+
+**Goal:** Automatically scale backend Pods based on CPU load using HPA, Metrics Server, and a load generator.
+
+**Manifests:** [`backend.yaml`](08.HPA,metrics-server,loadgenerator/backend/backend.yaml) — FastAPI backend with resource requests, [`hpa.yaml`](08.HPA,metrics-server,loadgenerator/backend/hpa.yaml) — HorizontalPodAutoscaler (min=3, max=10, target=60% CPU), [`load-generator.yaml`](08.HPA,metrics-server,loadgenerator/load_generator/load-generator.yaml) — Python traffic simulator.
+
+| Concept | Implementation |
+|---------|---------------|
+| Metrics Server | Installed separately — collects per-Pod CPU/memory from kubelets |
+| HPA | Reads metrics, computes desired replicas, updates Deployment |
+| Formula | `desiredReplicas = ceil[currentReplicas × (currentMetric / targetMetric)]` |
+| Resource Requests | HPA requires `resources.requests.cpu` on Pods to calculate utilization |
+| Load Generator | 20 Python threads hitting backend in a loop to raise CPU |
+| Scale Up | Instant — backend scaled from 3 → 5 → 7 replicas under load |
+| Scale Down | Delayed — 5 min cooldown to prevent thrashing |
+| kind TLS Fix | Metrics Server needs `--kubelet-insecure-tls` due to self-signed certs |
+
+**Debugging skills:**
+```bash
+# Install Metrics Server
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# Fix for kind self-signed certs
+kubectl patch deployment metrics-server -n kube-system --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+
+# Build images locally and load into kind
+docker build -t backend:1.0 ./backend
+kind load docker-image backend:1.0 --name k8
+docker build -t load-generator:1.1 ./load_generator
+kind load docker-image load-generator:1.1 --name k8
+
+# Deploy and watch autoscaling
+kubectl apply -f backend/backend.yaml
+kubectl apply -f backend/hpa.yaml
+kubectl apply -f load_generator/load-generator.yaml
+kubectl get hpa -n dev -w                 # Watch replicas change
+kubectl top pods -n dev                   # Real-time CPU per pod
+
+# Stop load → scale down
+kubectl delete deployment load-generator -n dev
+```
+
+**Common gotchas:** `ErrImagePull` when image isn't built/loaded into kind; `<unknown>` in HPA when Metrics Server is missing or hasn't started; empty `requirements.txt` causes `import requests` crash.
+
+---
+
 ## 🧱 Repository Structure
 
 ```
@@ -354,7 +400,26 @@ kubernetes-lab/
 │   │   └── frontend.yaml              ← Frontend Deployment + Service
 │   ├── note.md                        ← Phase notes & commands
 │   └── note.ipynb
-├── ... (phases 8–10)
+├── 08.HPA,metrics-server,loadgenerator/
+│   ├── backend/
+│   │   ├── main.py                    ← FastAPI backend
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   ├── backend.yaml               ← Backend Deployment + Service (with CPU requests)
+│   │   └── hpa.yaml                   ← HPA targeting 60% CPU, min=3 max=10
+│   ├── frontend/
+│   │   ├── main.py                    ← FastAPI frontend calling backend
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   └── frontend.yaml              ← Frontend Deployment + Service
+│   ├── load_generator/
+│   │   ├── main.py                    ← 20-thread traffic simulator
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   └── load-generator.yaml        ← Load Generator Deployment
+│   ├── note.md                        ← Phase notes & commands
+│   └── note.ipynb
+├── ... (phases 9–10)
 └── capstone/                          ← 🏆 Final production deployment
 ```
 
@@ -407,6 +472,11 @@ Each phase follows: **learn → build → document** with a manifest file (`.yam
 - ✅ Secret — base64-encoded sensitive data, injected via `secretKeyRef`
 - ✅ ConfigMap — non-sensitive config injected as env vars
 - ✅ Rolling update — zero-downtime Pod replacement by changing image tag
+- ✅ HPA — horizontal autoscaling based on CPU utilization
+- ✅ Metrics Server — cluster-wide resource metrics aggregation
+- ✅ Load Generator — traffic simulation to trigger autoscaling
+- ✅ kind + Metrics Server — `--kubelet-insecure-tls` workaround for self-signed certs
+- ✅ Scale-up is instant, scale-down has a 5-min cooldown
 
 ---
 
