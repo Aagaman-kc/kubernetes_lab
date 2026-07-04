@@ -5,7 +5,7 @@
 > One system evolves through every phase: React → Node API → Postgres → AWS EKS,
 > progressively layered with Deployments, Services, Ingress, CI/CD, HPA, monitoring, and RBAC.
 
-![Status](https://img.shields.io/badge/status-8%20of%2010%20phases%20complete-blue)
+![Status](https://img.shields.io/badge/status-9%20of%2010%20phases%20complete-blue)
 ![Kubernetes](https://img.shields.io/badge/tools-Kubernetes-326CE5?logo=kubernetes)
 ![Docker](https://img.shields.io/badge/tools-Docker-2496ED?logo=docker)
 ![AWS](https://img.shields.io/badge/cloud-AWS%20EKS-FF9900?logo=amazon-aws)
@@ -17,24 +17,32 @@
 ## 🧭 Architecture — Final Target
 
 ```
-         User
-           |
-        Ingress                          🌐 Single entry point
-           |                            (path-based routing)
-       ┌───┴───┐
-       │       │
-   React UI   /api ───→ Node API ──→ Postgres (PVC)
-   (port 80)              │                  │
-                          │            🗄️ StatefulSet
-                    Load Generator           + Persistent Volume
-                    (traffic simulation)
+         User (port 30080)
+            |
+            ▼
+    ┌──────────────┐
+    │ NGINX Ingress │  path-based routing
+    │ (NodePort)    │  /  → frontend-service:80
+    └──────┬───────┘  /api → backend-service:80
+           │
+      ┌────┴────┐
+      │         │
+      ▼         ▼
+ FastAPI UI   /api ──→ FastAPI API ──→ Postgres (PVC)
+ (httpx)       │         │                  │
+               │    Backend Pods ×2    🗄️ StatefulSet
+               │                           + PVC (1Gi)
+               │
+          ─ ─ ─┴─ CI/CD ─ ─ ─
+          Git push → GitHub Actions
+          → build → push → deploy
 ```
 
 **What this system demonstrates:**
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| Frontend | React (Container) | SPA served from k8s |
-| Backend | Node.js API | Business logic & API layer |
+| Frontend | FastAPI (Python) | SPA served from k8s, proxies `/api` via httpx |
+| Backend | FastAPI + psycopg2 | Business logic & PostgreSQL queries |
 | Database | PostgreSQL | Stateful storage with PV/PVC |
 | Traffic | Python Load Generator | Simulates real user load |
 | Routing | NGINX Ingress | Path-based L7 routing |
@@ -58,7 +66,7 @@
 | 6 | [K8s Networking Deep Dive](06.Networking-deep-dive/note.md) | ✅ Complete | FastAPI frontend → backend via CoreDNS, DNS deep dive | Service discovery, CoreDNS, kube-proxy |
 | 7 | [Stateful Applications & Configuration](07.pv%2Cconfigmap%2Csecrers/note.md) | ✅ Complete | PostgreSQL StatefulSet + PVC, ConfigMap + Secret injection, rolling update | PV/PVC, StatefulSet, Secrets, ConfigMap, rolling update |
 | 8 | [**Autoscaling Under Load**](08.HPA%2Cmetrics-server%2Cloadgenerator/note.md) | ✅ Complete | Backend scaled 3→7 via HPA under load generator traffic | Metrics Server, HPA, traffic simulation |
-| 9 | **Ingress & CI/CD** | ⬜ Up next | Path-based Ingress + GitHub Actions pipeline | Ingress controller, CI/CD automation |
+| 9 | [**Ingress & CI/CD**](09.Ingress_cicd/note.md) | ✅ Complete | Path-based NGINX Ingress + GitHub Actions CI/CD pipeline | Ingress controller, path-based routing, CI/CD automation |
 | 10 | **Production Readiness & Observability** | ⬜ Up next | RBAC, Prometheus, Grafana, EKS overview | Security, monitoring, cloud deployment |
 | 🏆 | **Final Capstone** | ⬜ Up next | Full production stack on AWS EKS | Everything combined |
 
@@ -335,6 +343,63 @@ kubectl delete deployment load-generator -n dev
 
 ---
 
+### Phase 9: Ingress Controller & CI/CD Pipeline
+
+**Goal:** Expose frontend + backend through a single NGINX Ingress endpoint (path-based routing), then automate builds and deployments with a GitHub Actions CI/CD pipeline.
+
+**Manifests:** [`ingress.yaml`](09.Ingress_cicd/k8s/ingress.yaml) — NGINX Ingress with path-based routing, [`config-and-secret.yaml`](09.Ingress_cicd/k8s/config-and-secret.yaml) — ConfigMap + Secret, [`postgres.yaml`](09.Ingress_cicd/k8s/postgres.yaml) — PostgreSQL StatefulSet, [`backend-deployment.yaml`](09.Ingress_cicd/k8s/backend-deployment.yaml) — Backend with env injection, [`frontend-deployment.yaml`](09.Ingress_cicd/k8s/frontend-deployment.yaml) — Frontend, [`deploy.yml`](09.Ingress_cicd/.github/workflows/deploy.yml) — CI/CD pipeline.
+
+| Concept | Implementation |
+|---------|---------------|
+| Ingress | L7 routing — single `NodePort:30080` entry point with path-based dispatch |
+| Ingress Controller | Installed separately in kind (`ingress-nginx`), maps host port 30080 → 80 |
+| Path-Based Routing | `/` → frontend-service, `/api` → backend-service |
+| No port-forward | Ingress exposes permanently — unlike earlier phases requiring `kubectl port-forward` |
+| CI/CD Pipeline | GitHub Actions triggered on push to `main` with changes in `09.Ingress_cicd/` |
+| Build & Push | Docker images built and pushed to Docker Hub tagged with commit SHA |
+| Deploy Step | `azure/k8s-deploy` action updates deployments with new image tags |
+| GitHub Secrets | `DOCKER_USERNAME`, `DOCKER_PASSWORD`, `KUBECONFIG` injected at runtime |
+| Secret Management | Kubeconfig base64-encoded and stored as GitHub secret |
+| PostgreSQL Integration | Backend auto-creates `messages` table on startup, seeds initial data |
+| FastAPI Frontend | Uses `httpx.AsyncClient` to proxy `/api` to backend — no nginx reverse proxy needed |
+| Rolling Update | CI/CD pipeline triggers zero-downtime deployment with new image |
+
+**Debugging skills:**
+```bash
+# Install Ingress Controller
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+
+# Wait for controller
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
+  --timeout=90s
+
+# Build and load images locally
+cd backend && docker build -t fastapi-backend:2.0 . && cd ..
+cd frontend && docker build -t frontend:1.0 . && cd ..
+kind load docker-image fastapi-backend:2.0 --name k8-lab
+kind load docker-image frontend:1.0 --name k8-lab
+
+# Apply all manifests
+kubectl apply -f k8s/config-and-secret.yaml
+kubectl apply -f k8s/postgres.yaml
+kubectl apply -f k8s/backend-deployment.yaml
+kubectl apply -f k8s/frontend-deployment.yaml
+kubectl apply -f k8s/ingress.yaml
+
+# Test in browser (no port-forward needed!)
+# http://localhost:30080/
+
+# Check Ingress rules
+kubectl get ingress -n production
+kubectl describe ingress main-ingress -n production
+```
+
+**Bugs fixed:** Ingress controller must be installed for Kind (not automatic); Ingress must be in the same namespace as its backend Services; frontend must call the correct Service DNS name (`backend-service`); images must be loaded into kind before deployment.
+
+---
+
 ## 🧱 Repository Structure
 
 ```
@@ -419,7 +484,28 @@ kubernetes-lab/
 │   │   └── load-generator.yaml        ← Load Generator Deployment
 │   ├── note.md                        ← Phase notes & commands
 │   └── note.ipynb
-├── ... (phases 9–10)
+├── 09.Ingress_cicd/
+│   ├── k8s/
+│   │   ├── config-and-secret.yaml     ← ConfigMap + Secret for DB config
+│   │   ├── postgres.yaml              ← Headless Service + StatefulSet (1Gi PVC)
+│   │   ├── backend-deployment.yaml    ← Deployment ×2 + ClusterIP Service
+│   │   ├── frontend-deployment.yaml   ← Deployment ×1 + ClusterIP Service
+│   │   └── ingress.yaml              ← NGINX Ingress (/ → frontend, /api → backend)
+│   ├── backend/
+│   │   ├── main.py                    ← FastAPI with psycopg2, auto-creates messages table
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   └── Dockerfile
+│   ├── frontend/
+│   │   ├── main.py                    ← FastAPI with httpx, serves HTML + proxies /api
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   └── Dockerfile
+│   ├── .github/workflows/
+│   │   └── deploy.yml                ← GitHub Actions: build → push → deploy on push
+│   ├── note.md                        ← Phase notes & commands
+│   └── note.ipynb
+├── ... (phase 10)
 └── capstone/                          ← 🏆 Final production deployment
 ```
 
@@ -477,6 +563,16 @@ Each phase follows: **learn → build → document** with a manifest file (`.yam
 - ✅ Load Generator — traffic simulation to trigger autoscaling
 - ✅ kind + Metrics Server — `--kubelet-insecure-tls` workaround for self-signed certs
 - ✅ Scale-up is instant, scale-down has a 5-min cooldown
+- ✅ Ingress — L7 path-based routing with NGINX Ingress Controller
+- ✅ Ingress Controller — installed separately for kind (ingress-nginx), NodePort 30080
+- ✅ Path-based routing — `/` → frontend, `/api` → backend through single entry point
+- ✅ No port-forward — Ingress exposes services permanently on host port 30080
+- ✅ CI/CD pipeline — GitHub Actions triggered on git push to main
+- ✅ Build & Push — Docker images built and pushed to Docker Hub tagged with commit SHA
+- ✅ Automated deploy — `kubectl set image` triggered by CI/CD pipeline
+- ✅ GitHub Secrets — `DOCKER_USERNAME`, `DOCKER_PASSWORD`, `KUBECONFIG` injected at deploy-time
+- ✅ FastAPI Frontend with httpx — async HTTP proxy to backend (no nginx reverse proxy needed)
+- ✅ Full production stack — Browser → Ingress → Frontend → Backend → PostgreSQL
 
 ---
 
